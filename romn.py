@@ -1,11 +1,35 @@
 # A LEEP-inspired hierarchical ROM decoder
 
-class ROMN():
+class Entry():
     key_modules = "modules"
     key_regs = "regs"
 
-    def __init__(self, dd):
+    def __init__(self, name, dd, offset=0):
+        self.offset = offset
+        self.name = name
         self._dd = dd
+        self.is_module = False
+        if (self.key_modules in dd) or (self.key_regs in dd):
+            self.is_module = True
+
+    @property
+    def modules(self):
+        return self._dd.get(self.key_modules, {})
+
+    @property
+    def regs(self):
+        return self._dd.get(self.key_regs, {})
+
+    @property
+    def items(self):
+        dx = self.modules.copy()
+        dx.update(self.regs)
+        return dx
+
+
+class ROMN(Entry):
+    def __init__(self, dd):
+        super().__init__(None, dd, 0)
 
     def printMap(self, depth=None, color=False):
         # TODO color
@@ -50,7 +74,20 @@ class ROMN():
             _name = name
             dd = item
             offset = offset + dd.get("base_addr", 0)
-        return _name, offset, dd
+        return Entry(_name, dd, offset)
+
+    def list(self, query):
+        """If the item specified by the query is a register, returns only the register.
+        Otherwise, returns all registers in the module."""
+        entry = self.find(query)
+        if entry is None:
+            return ()
+        if len(entry.items) > 0:
+            items = []
+            for name, dd in entry.items.items():
+                items.append(Entry(name, dd, offset = entry.offset + dd["base_addr"]))
+            return items
+        return (entry,)
 
 
 def fromJSON(filename):
@@ -71,8 +108,12 @@ def main():
     if args.query is None:
         romn.printMap()
     else:
-        name, offset, dd = romn.find(args.query)
-        print(f"{name}: 0x{offset:x} ({offset})")
+        entries = romn.list(args.query)
+        for entry in entries:
+            name = entry.name
+            if entry.is_module:
+                name = "~" + entry.name
+            print(f"{name}: 0x{entry.offset:x} ({entry.offset})")
     return 0
 
 

@@ -1,6 +1,34 @@
 # ROMN
 An attempt at a scalable, hierarchical self-documentation scheme for FPGA memory maps
 
+## Status
+* Mockup of the JSON structure created (see [romn\_demo.json](romn_demo.json))
+* A script [romn.py](romn.py) for parsing said JSON
+
+### Examples
+Print the whole memory map
+```sh
+$ python3 romn.py romn_demo.json
+~twi
+  ~foo_i
+    config
+    start
+    busy
+  ctrl
+  start
+  status
+  data
+leds
+pmod1_output
+pmod1_input
+```
+
+Find a particular module/register (hierarchical reference), returning its global address
+```sh
+$ python3 romn.py romn_demo.json -q twi.foo_i.config
+config: 0x2100 (8448)
+```
+
 ## The Problem
 Let me describe the problem this system/tool is trying to solve.  Suppose we have an FPGA RTL design with a flat memory map,
 meaning all host-accessible registers are given unique names and have addresses not necessarily based on their function.
@@ -85,8 +113,9 @@ A lot of features of this system are present in the _romx_ LBNL implementation. 
 
 ## The name
 Cute, right? Pronounced "ramen", it's a short hint at the fact that a codebase could have `N` different __ROM__ instances,
-each representing a module with an accessible memory map.  A `top ROMN` (I'm just being silly now) is accessible at
-global address `0` which provides an entry point for discovery of the entire memory map.
+each representing a module with an accessible memory map.  Though in practice, there will probably only be a single ROMN
+(a `top ROMN`... I'm just being silly now) accessible at global address `0` (mandatory) which provides an entry point for
+discovery of the entire memory map.
 
 ## Structure
 
@@ -98,19 +127,10 @@ of "table of contents" with pointers to each separate `ROMN` instance in the cod
 Contents
   * Some sort of magic number indicating _ROMN_-compatibility (at offset 0)
   * Module name and/or short description?
-  * A compressed JSON with the following:
+  * A compressed JSON, in a nested hierarchy of unbounded depth, containing the following at every level:
     - Entries for each CSR/RAM with addresses relative to each instance's base address
-    - Entries for each sub-module instance, supplying base address of instance as well as some sort of pointer to a ROMN describing the module?
-  * Instance parameters?  Or should these just be readable on the memory map?  Decisions...
-
-### Top ROMN
-Contents
-  * Some sort of magic number indicating _ROMN_-compatibility (at offset 0)
-  * Codebase name and short description
-  * git commit hash
-  * A compressed JSON with the following:
-    - Entries for each CSR/RAM that happen to live at the top level
-    - Entries for each _ROMN_ instance in the memory map
+    - Entries for each sub-module instance, supplying base address, the module type, its total address width, and a similarly
+      structured dict representing the next nested hierarhical level.
 
 ## Comparison with flat memory map
 The LBNL _romx_ system provides a top-level ROM accessible from one of two known/fixed addresses (neither are 0, unfortunately)
@@ -121,13 +141,13 @@ which provides:
 
 Advantages of this LBNL approach over _ROMN_ include:
   * simpler
-  * fewer ROM resources used for non-redundant codebase
-  * actually exists outside of ideas scratched out onto a clumsy README file
+  * actually exists outside of ideas scratched out into a clumsy README file
 
 Advantages of _ROMN_ include:
   * hierarchy is encapsulated
-  * fewer ROM resources used for redundant codebases (multiple instances of same module appear on memory map)
   * no register name-mangling required (see first point)
+  * modular software (drivers) can be reused in the same way the gateware is reused (because of the predictable alignment of
+    the CSRs/RAMs that make up the software-gateware interface)
 
 # Orthogonal Considerations
 

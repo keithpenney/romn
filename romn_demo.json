@@ -1,0 +1,92 @@
+{
+  "regs" : {
+    "leds": {
+      "access": "rw",
+      "addr_width": 0,
+      "sign": "unsigned",
+      "base_addr": 0,
+      "data_width": 2
+    },
+    "pmod1_output": {
+      "access": "rw",
+      "addr_width": 0,
+      "sign": "unsigned",
+      "base_addr": 1,
+      "data_width": 8
+    },
+    "pmod1_input": {
+      "access": "r",
+      "addr_width": 0,
+      "sign": "unsigned",
+      "base_addr": 2,
+      "data_width": 8
+    }
+  },
+  "modules": {
+    "twi": {
+      "instanceof": "i2c_chunk_gb",
+      "base_addr": 8192,
+      "addr_width": 13,
+      "regs": {
+        "ctrl": {
+          "access": "rw",
+          "addr_width": 0,
+          "sign": "unsigned",
+          "base_addr": 0,
+          "data_width": 5
+        },
+        "start": {
+          "access": "w",
+          "addr_width": 0,
+          "sign": "unsigned",
+          "base_addr": 1,
+          "data_width": 1
+        },
+        "status": {
+          "access": "r",
+          "addr_width": 0,
+          "sign": "unsigned",
+          "base_addr": 2,
+          "data_width": 5
+        },
+        "data": {
+          "access": "rw",
+          "addr_width": 12,
+          "sign": "unsigned",
+          "base_addr": 4096,
+          "data_width": 8
+        }
+      },
+      "modules": {
+        "foo_i": {
+          "instanceof": "foo",
+          "base_addr": 256,
+          "addr_width": 8,
+          "regs": {
+            "config": {
+              "access": "rw",
+              "addr_width": 0,
+              "sign": "unsigned",
+              "base_addr": 0,
+              "data_width": 8
+            },
+            "start": {
+              "access": "w",
+              "addr_width": 0,
+              "sign": "unsigned",
+              "base_addr": 1,
+              "data_width": 1
+            },
+            "busy": {
+              "access": "r",
+              "addr_width": 0,
+              "sign": "unsigned",
+              "base_addr": 2,
+              "data_width": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

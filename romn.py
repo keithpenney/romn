@@ -1,5 +1,22 @@
 # A LEEP-inspired hierarchical ROM decoder
 
+
+def create_array(magic, descrip, json_file, git_sha="0"*40):
+    """A very slight variant of bedrock's build_rom"""
+    from build_rom import compress_file, sixteen, chunk
+    git_binary = [int(git_sha[ix * 4 + 0:ix * 4 + 4], 16) for ix in range(10)]
+    sha1sum, regmap = compress_file(json_file)
+    json_sha1_binary = [
+        int(sha1sum[ix * 4 + 0:ix * 4 + 4], 16) for ix in range(10)
+    ]
+    descrip_binary = sixteen(descrip, pad=b' ')
+    final = (sixteen(magic.encode('utf-8')) + chunk(
+        json_sha1_binary, flag=2) + chunk(
+            git_binary, flag=2) + chunk(descrip_binary) + chunk(
+                regmap, flag=3))
+    return final
+
+
 class Entry():
     key_modules = "modules"
     key_regs = "regs"
@@ -28,8 +45,18 @@ class Entry():
 
 
 class ROMN(Entry):
+    magic_number = "\x17\x33"
+    default_description = "ROMN-Compatible Codebase"
+
     def __init__(self, dd):
         super().__init__(None, dd, 0)
+
+    @classmethod
+    def build_rom(cls, json_file, description=None, gitid="0"*40):
+        if description is None:
+            description = cls.default_description
+        description = description.encode('utf-8')
+        return create_array(cls.magic_number, description, json_file, gitid)
 
     def printMap(self, depth=None, color=False):
         # TODO color

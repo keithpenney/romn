@@ -1,5 +1,7 @@
 # A LEEP-inspired hierarchical ROM decoder
 
+from lass import LASSWrapper
+
 
 def create_array(magic, descrip, json_file, git_sha="0"*40):
     """A very slight variant of bedrock's build_rom"""
@@ -17,15 +19,88 @@ def create_array(magic, descrip, json_file, git_sha="0"*40):
     return final
 
 
-class Entry():
-    key_modules = "modules"
-    key_regs = "regs"
+class RegisterEntry():
+    READ = 1
+    WRITE = 2
+    RW = READ | WRITE
+
+    key_access = "access"
+    key_aw = "addr_width"
+    key_dw = "data_width"
+    key_sign = "sign"
+    key_base = "base_addr"
 
     def __init__(self, name, dd, offset=0):
         self.offset = offset
         self.name = name
         self._dd = dd
         self.is_module = False
+
+    @property
+    def base_absolute(self):
+        return self.offset + self._dd.get(self.key_base, 0)
+
+    @property
+    def base_relative(self):
+        return self._dd.get(self.key_base, 0)
+
+    @property
+    def aw(self):
+        return self._dd.get(self.key_aw, 0)
+
+    @property
+    def dw(self):
+        return self._dd.get(self.key_dw, 32)
+
+    @property
+    def access(self):
+        return self._dd.get(self.key_access, cls.RW)
+
+    @property
+    def sign(self):
+        return self._dd[self.key_sign]
+
+    @classmethod
+    def accessToStr(cls, access):
+        sd = {
+            cls.READ: "r",
+            cls.WRITE: "w",
+            cls.RW: "rw",
+            cls.UNSPECIFIED: "unknown",
+        }
+        return sd[access]
+
+    @classmethod
+    def accessFromStr(cls, ss):
+        if "w" in ss:
+            if "r" in ss:
+                return cls.RW
+            else:
+                return cls.WRITE
+        elif "r" in ss:
+            return cls.READ
+        raise Exception(f"Unknown string {ss}")
+
+    @classmethod
+    def signedToStr(cls, signed=False):
+        if signed:
+            return "signed"
+        return "unsigned"
+
+    @classmethod
+    def signedFromStr(cls, ss):
+        if ss == "signed":
+            return True
+        return False
+
+
+class ModuleEntry(RegisterEntry):
+    key_modules = "modules"
+    key_regs = "regs"
+    key_instanceof = "instanceof"
+
+    def __init__(self, name, dd, offset=0):
+        super().__init__(name, dd, offset)
         if (self.key_modules in dd) or (self.key_regs in dd):
             self.is_module = True
 
@@ -44,12 +119,124 @@ class Entry():
         return dx
 
 
-class ROMN(Entry):
+class ROMNDevice():
+    def __init__(self, dev):
+        self.dev = dev
+        self._getROMN()
+
+    def _getROMN(self):
+        import zlib
+        import json
+        import struct
+        self.romn = None
+        self.descript = None
+        self.codehash = None
+        # Read from address 0
+        block = self.dev.read(0, size=2)
+        magic = block[0]
+        if magic != ROMN.magic_number:
+            ss = f"Non-ROMN compatible device (address 0 = 0x{magic:x})"
+            if self._allow_incompatible:
+                print(f"WARNING: {ss}")
+            else:
+                raise Exception(ss)
+        # First entry at address 1
+        datum = block[1]
+        type_code = (datum >> 14) & 0x3
+        dlen = datum & 0x3fff
+        base = 1
+        while True:
+            if type_code == 0:
+                break
+            block = self.dev.read(base + 1, size = dlen + 1)
+            data = block[:-1]
+            datum = block[-1]
+            if type_code == 1:
+                # ASCII descriptor, read 'dlen' to get the string
+                self.descript = self._ascii16(data)
+            elif type_code == 2:
+                # SHA hash or git rev
+                datahex = "".join(["{:x}".format(x) for x in data])
+                self.codehash = datahex
+            elif type_code == 3:
+                # zlib-compressed JSON
+                packed = struct.pack("!" + "H"*len(data), *data)
+                regmap = json.loads(zlib.decompress(packed).decode("utf-8"))
+                self.romn = ROMN(regmap)
+            type_code = (datum >> 14) & 0x3
+            dlen = datum & 0x3fff
+            base += dlen + 1
+        if self.romn is None:
+            print(f"WARNING: no ROM found!")
+        return
+
+    def reg_read(self, names, domain=None):
+        """Read from registers by names listed in list 'names' optionally rooted in domain 'domain'.
+        If 'domain' is None, the names are assumed to be findable in the global namespace (either top-level
+        or by hierarchical reference)."""
+        addrs = []
+        for name in names:
+            if hasattr(name, "lower"):
+                regdict = self.romn._getFlat(name, domain)
+                addr = regdict[RegisterEntry.key_base]
+            else:
+                addr = int(name)
+            addrs.append(addr)
+        return self.dev.read_many(addrs)
+
+    def reg_write(self, namevals, domain=None):
+        """Write to registers by (name, value) pairs listed in list 'namevals' optionally rooted in
+        domain 'domain'.
+        If 'domain' is None, the names are assumed to be findable in the global namespace (either top-level
+        or by hierarchical reference)."""
+        addrvals = []
+        for name, val in namevals:
+            if hasattr(name, "lower"):
+                regdict = self.romn._getFlat(name, domain)
+                addr = regdict[RegisterEntry.key_base]
+            else:
+                addr = int(name)
+            addrvals.append((addr, val))
+        return self.dev.write_many(addrvals)
+
+
+class ROMN(ModuleEntry):
     magic_number = "\x17\x33"
     default_description = "ROMN-Compatible Codebase"
 
     def __init__(self, dd):
         super().__init__(None, dd, 0)
+        self._buildFlat()
+
+    def _buildFlat(self):
+        self._flat = {}
+        domain = ""
+        def collectRegs(todict, fromdict, offset, hierarchy):
+            entry = ModuleEntry(None, fromdict, offset)
+            for name, regdict in entry.regs.items():
+                hier = list(hierarchy) + [name]
+                fullname = ".".join(hier)
+                rd = regdict.copy()
+                reg = RegisterEntry(None, rd, entry.base_absolute)
+                #print(f"{rd[self.key_base]:x} -> {reg.base_absolute:x} (from {entry.base_absolute:x})")
+                rd[self.key_base] = reg.base_absolute
+                todict[fullname] = rd
+            for name, moddict in entry.modules.items():
+                hier = list(hierarchy) + [name]
+                collectRegs(todict, moddict, offset = offset + entry.base_absolute, hierarchy = hier)
+        collectRegs(self._flat, self._dd, 0, [])
+        return
+
+    def _printFlat(self):
+        for regname, regdict in self._flat.items():
+            base = regdict.get(self.key_base, None)
+            print(f"{regname}: 0x{base:x} ({base})")
+        return
+
+    def _getFlat(self, regname, domain=None):
+        if domain is None:
+            domain = ""
+        return self._flat[domain+regname]
 
     @classmethod
     def build_rom(cls, json_file, description=None, gitid="0"*40):
@@ -101,7 +288,7 @@ class ROMN(Entry):
             _name = name
             dd = item
             offset = offset + dd.get("base_addr", 0)
-        return Entry(_name, dd, offset)
+        return ModuleEntry(_name, dd, offset)
 
     def list(self, query):
         """If the item specified by the query is a register, returns only the register.
@@ -112,7 +299,7 @@ class ROMN(Entry):
         if len(entry.items) > 0:
             items = []
             for name, dd in entry.items.items():
-                items.append(Entry(name, dd, offset = entry.offset + dd["base_addr"]))
+                items.append(ModuleEntry(name, dd, offset = entry.offset + dd["base_addr"]))
             return items
         return (entry,)
 
@@ -130,10 +317,13 @@ def main():
     parser = argparse.ArgumentParser("Interact with a ROMN JSON")
     parser.add_argument("json", help="JSON memory map file")
     parser.add_argument("-q", "--query", default=None, help="Reg/module/tree to query")
+    parser.add_argument("-f", "--flat", default=False, action="store_true", help="Print flat")
     args = parser.parse_args()
     romn = fromJSON(args.json)
-    if args.query is None:
+    if args.query is None and not args.flat:
         romn.printMap()
+    elif args.flat:
+        romn._printFlat()
     else:
         entries = romn.list(args.query)
         for entry in entries:

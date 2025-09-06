@@ -80,26 +80,6 @@ class LASSDevice():
         return ret
 
 
-class LASSWrapper(LASSDevice):
-    def read(self, addr, size=1):
-        addrs = [addr + n for n in range(size)]
-        vals = [None]*size
-        result = self.exchange(addrs, vals)
-        if size == 1:
-            result = result[0]
-        return result
-
-    def write(self, addr, val):
-        return self.exchange((addr,), (val,))
-
-    def read_many(self, addrs):
-        vals = [None]*len(addrs)
-        return self.exchange(addrs, vals)
-
-    def write_many(self, addrs, values):
-        return self.exchange(addrs, values)
-
-
 def doLASS():
     import argparse
     parser = argparse.ArgumentParser("Perform a single LASS transaction by address/value literals.")

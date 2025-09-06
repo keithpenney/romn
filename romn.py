@@ -142,8 +142,9 @@ class ROMNDevice():
         self.romn = None
         self.descript = None
         self.codehash = None
+        self.jsonhash = None
         # Read from address 0
-        block = self.dev.read(0, size=2)
+        block = self.dev.read(0, size=2, dw=16)
         magic = block[0]
         if magic != ROMN.magic_number:
             ss = f"Non-ROMN compatible device (address 0 = 0x{magic:x})"
@@ -156,11 +157,10 @@ class ROMNDevice():
         datum = block[base]
         type_code = (datum >> 14) & 0x3
         dlen = datum & 0x3fff
-        self.jsonhash = None
         while True:
             if type_code == 0:
                 break
-            block = self.dev.read(base + 1, size = dlen + 1)
+            block = self.dev.read(base + 1, size = dlen + 1, dw=16)
             data = block[:-1]
             dhex = "[" + " ".join([hex(x) for x in data[:4]]) + "]"
             if verbose:
@@ -201,15 +201,17 @@ class ROMNDevice():
         """Read from registers by names listed in list 'names' optionally rooted in domain 'domain'.
         If 'domain' is None, the names are assumed to be findable in the global namespace (either top-level
         or by hierarchical reference)."""
-        addrs = []
+        addr_widths = []
         for name in names:
             if hasattr(name, "lower"):
                 regdict = self.romn._getFlat(name, domain)
                 addr = regdict[RegisterEntry.key_base]
+                width = regdict[RegisterEntry.key_dw]
             else:
                 addr = int(name)
-            addrs.append(addr)
-        return self.dev.read_many(addrs)
+                width = 32 # default dw
+            addr_widths.append((addr, width))
+        return self.dev.read_many(addr_widths)
 
     def reg_write(self, namevals, domain=None):
         """Write to registers by (name, value) pairs listed in list 'namevals' optionally rooted in

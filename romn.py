@@ -1,21 +1,25 @@
 # A LEEP-inspired hierarchical ROM decoder
 
-from lass import LASSWrapper
-
 
 def create_array(magic, descrip, json_file, git_sha="0"*40):
     """A very slight variant of bedrock's build_rom"""
-    from build_rom import compress_file, sixteen, chunk
+    from build_rom import compress_file, sixteen, chunk, desc_limit_check
+    desc_limit_check(descrip)
     git_binary = [int(git_sha[ix * 4 + 0:ix * 4 + 4], 16) for ix in range(10)]
     sha1sum, regmap = compress_file(json_file)
     json_sha1_binary = [
         int(sha1sum[ix * 4 + 0:ix * 4 + 4], 16) for ix in range(10)
     ]
+    print(f"json_sha1_binary = {json_sha1_binary}")
     descrip_binary = sixteen(descrip, pad=b' ')
-    final = (sixteen(magic.encode('utf-8')) + chunk(
-        json_sha1_binary, flag=2) + chunk(
-            git_binary, flag=2) + chunk(descrip_binary) + chunk(
-                regmap, flag=3))
+    print(f"descrip_binary = {descrip_binary}")
+    final = (
+        sixteen(magic.encode('utf-8'))
+        + chunk(json_sha1_binary, flag=2)
+        + chunk(git_binary, flag=2)
+        + chunk(descrip_binary, flag=1)
+        + chunk(regmap, flag=3)
+    )
     return final
 
 
@@ -120,11 +124,18 @@ class ModuleEntry(RegisterEntry):
 
 
 class ROMNDevice():
-    def __init__(self, dev):
+    def __init__(self, dev, allow_incompatible=False):
+        self._allow_incompatible = allow_incompatible
         self.dev = dev
         self._getROMN()
 
-    def _getROMN(self):
+    @staticmethod
+    def _ascii16(data):
+        import struct
+        packed = struct.pack("!" + "H"*len(data), *data)
+        return packed.decode("utf-8")
+
+    def _getROMN(self, verbose=False):
         import zlib
         import json
         import struct
@@ -141,31 +152,47 @@ class ROMNDevice():
             else:
                 raise Exception(ss)
         # First entry at address 1
-        datum = block[1]
+        base = 1
+        datum = block[base]
         type_code = (datum >> 14) & 0x3
         dlen = datum & 0x3fff
-        base = 1
+        self.jsonhash = None
         while True:
             if type_code == 0:
                 break
             block = self.dev.read(base + 1, size = dlen + 1)
             data = block[:-1]
-            datum = block[-1]
+            dhex = "[" + " ".join([hex(x) for x in data[:4]]) + "]"
+            if verbose:
+                print(f"base = 0x{base:x}; datum = {datum:x}; dlen = {dlen}; type_code = {type_code}; data[:4] = {dhex}")
             if type_code == 1:
                 # ASCII descriptor, read 'dlen' to get the string
                 self.descript = self._ascii16(data)
+                if verbose:
+                    print("  Descript: " + self.descript)
             elif type_code == 2:
                 # SHA hash or git rev
                 datahex = "".join(["{:x}".format(x) for x in data])
-                self.codehash = datahex
+                if self.jsonhash is None:
+                    self.jsonhash = datahex
+                else:
+                    self.codehash = datahex
+                if verbose:
+                    print("  Codehash: " + datahex)
             elif type_code == 3:
                 # zlib-compressed JSON
                 packed = struct.pack("!" + "H"*len(data), *data)
                 regmap = json.loads(zlib.decompress(packed).decode("utf-8"))
                 self.romn = ROMN(regmap)
+                #self.regmap = regmap
+                if verbose:
+                    print(f"  len(regmap) = {len(regmap)}")
+            base += dlen + 1
+            datum = block[-1]
             type_code = (datum >> 14) & 0x3
             dlen = datum & 0x3fff
-            base += dlen + 1
+            if verbose:
+                print(f"New dlen = {dlen}, new base = {base}")
         if self.romn is None:
             print(f"WARNING: no ROM found!")
         return
@@ -201,7 +228,8 @@ class ROMNDevice():
 
 
 class ROMN(ModuleEntry):
-    magic_number = "\x17\x33"
+    magic_string = "\x17\x33"
+    magic_number = 0x1733
     default_description = "ROMN-Compatible Codebase"
 
     def __init__(self, dd):
@@ -243,7 +271,7 @@ class ROMN(ModuleEntry):
         if description is None:
             description = cls.default_description
         description = description.encode('utf-8')
-        return create_array(cls.magic_number, description, json_file, gitid)
+        return create_array(cls.magic_string, description, json_file, gitid)
 
     def printMap(self, depth=None, color=False):
         # TODO color

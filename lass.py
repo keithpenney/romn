@@ -2,6 +2,8 @@ import numpy
 import random
 import socket
 
+be32 = numpy.dtype('>u4')
+
 class LASSDevice():
     def __init__(self, addr, timeout=0.1):
         host, _sep, port = addr.partition(':')
@@ -79,8 +81,13 @@ class LASSDevice():
 
 
 class LASSWrapper(LASSDevice):
-    def read(self, addr):
-        return self.exchange((addr,), (None,))[0]
+    def read(self, addr, size=1):
+        addrs = [addr + n for n in range(size)]
+        vals = [None]*size
+        result = self.exchange(addrs, vals)
+        if size == 1:
+            result = result[0]
+        return result
 
     def write(self, addr, val):
         return self.exchange((addr,), (val,))

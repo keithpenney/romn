@@ -275,13 +275,14 @@ class ROMN(ModuleEntry):
         description = description.encode('utf-8')
         return create_array(cls.magic_string, description, json_file, gitid)
 
-    def printMap(self, depth=None, color=False):
+    def printMap(self, depth=None, color=False, absolute=False):
         # TODO color
         _depth = 0
         key_modules = self.key_modules
         key_regs = self.key_regs
+        key_base = self.key_base
 
-        def printLevel(dd, to_depth, color=color, indent=0):
+        def printLevel(dd, to_depth, color=color, indent=0, base=0):
             # TODO color
             stop = False
             if to_depth is None:
@@ -292,12 +293,20 @@ class ROMN(ModuleEntry):
                 stop = True
             modules = dd.get(key_modules, {})
             for name, mdict in modules.items():
-                print(" "*indent + f"~{name}")
+                modbase = mdict.get(key_base) + base
+                print(" "*indent + f"~{name}: {hex(modbase)} ({modbase})")
                 if not stop:
-                    printLevel(mdict, next_depth, color=color, indent=indent + 2)
+                    if absolute:
+                        nextbase = modbase
+                    else:
+                        nextbase = 0
+                    printLevel(mdict, next_depth, color=color, indent=indent + 2, base=nextbase)
             regs = dd.get(key_regs, {})
-            for name in regs.keys():
-                print(" "*indent + name)
+            for name, rdict in regs.items():
+                regbase = rdict.get(key_base, 0)
+                if absolute:
+                    regbase += modbase
+                print("{}{}: {} ({})".format(" "*indent, name, hex(regbase), regbase))
         printLevel(self._dd, depth, color=color)
         return
 
@@ -348,10 +357,11 @@ def main():
     parser.add_argument("json", help="JSON memory map file")
     parser.add_argument("-q", "--query", default=None, help="Reg/module/tree to query")
     parser.add_argument("-f", "--flat", default=False, action="store_true", help="Print flat")
+    parser.add_argument("--abs", default=False, action="store_true", help="List absolute addresses (default relative)")
     args = parser.parse_args()
     romn = fromJSON(args.json)
     if args.query is None and not args.flat:
-        romn.printMap()
+        romn.printMap(absolute=args.abs)
     elif args.flat:
         romn._printFlat()
     else:

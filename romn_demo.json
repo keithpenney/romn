@@ -87,6 +87,9 @@
           }
         }
       }
-    }
+    },
+  "base_addr": 0,
+  "instanceof": "",
+  "addr_width": 14
   }
 }
